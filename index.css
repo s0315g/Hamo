@@ -1,0 +1,6 @@
+/* Minimal index.css to prevent 404. Add your styles or Tailwind build output here. */
+:root{--primary:#FFC700}
+html,body,#root{height:100%}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#0f0c29 0%,#302b63 50%,#24243e 100%);color:#F0F8FF}
+
+/* If you later integrate Tailwind via PostCSS, replace this file with the generated CSS. */

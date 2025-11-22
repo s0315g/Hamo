@@ -1,0 +1,7 @@
+{
+  "name": "Hamo Docent AI",
+  "description": "An interactive AI docent for museums and historical sites. Explore themes, get detailed descriptions, ask an AI questions, and complete missions related to the historical context.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
