@@ -137,14 +137,10 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
   }, [items, theme]);
   
   const videoSources = {
-    imjin_war: '/videos/hamowar_start_video.mp4', // A proxy for Jinju fortress
-    jinju_museum: '/videos/hamowar_start_video.mp4', // A proxy for a museum/historical building
+    imjin_war: '/videos/hamowar_start_video.mp4',
+    jinju_museum: '/videos/hamowar_start_video.mp4',
     gonryongpo: '/videos/hamowar_start_video.mp4'
   };
-  // Choose background video. Prefer an item-specific video when available
-  // (items[activeSpot].video / video_src / videoUrl / raw.video / media.video),
-  // otherwise fall back to the theme-level video. Keep the special Imjin War
-  // intro for first spot unless an item video overrides it.
   const themeVideo = videoSources[theme.id] || videoSources['jinju_museum'];
 
   let itemVideo: string | null = null;
@@ -171,12 +167,12 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
 
   // Default special-case: for the Imjin War theme, prefer specific intro videos
   // for the first and second spots unless a client override is present.
-  const imjinIntro = '/videos/hamoIntroduce.mp4';
-  const imjinSecond = '/videos/hamowar_start_video.mp4';
+  const introVideo = '/videos/hamoIntroduce.mp4';
+  const courseVideo = '/videos/hamowar_start_video.mp4';
   let videoSrc = itemVideo || themeVideo;
-  if (!itemVideo && theme?.id === 'imjin_war') {
-    if (activeSpot === 0) videoSrc = imjinIntro;
-    else if (activeSpot === 1) videoSrc = imjinSecond;
+  if (!itemVideo) {
+    if (activeSpot === 0) videoSrc = introVideo;
+    else videoSrc = courseVideo;
   }
 
   useEffect(() => {
