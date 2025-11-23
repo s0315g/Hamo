@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Test Chat Proxy</title>
+  <style>
+    body { font-family: system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial; background:#0b1220; color:#e6eef8; padding:24px }
+    .card{ background:rgba(255,255,255,0.03); padding:20px; border-radius:12px; max-width:900px; margin:0 auto }
+    textarea{ width:100%; height:80px; font-size:14px; padding:8px; border-radius:8px; background:#07101a; color:#e6eef8; border:1px solid #203040 }
+    input[type=text]{ width:100%; padding:8px; border-radius:8px; background:#07101a; color:#e6eef8; border:1px solid #203040 }
+    button{ background:#ffc107; border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:600 }
+    pre{ background:#041018; padding:12px; border-radius:8px; overflow:auto; max-height:360px }
+    label{ display:inline-flex; gap:8px; align-items:center }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>테스트: 백엔드 / 프록시 호출</h2>
+    <p>기본적으로 앱 프록시 <code>/.netlify/functions/backend-proxy?path=/api/chat</code> 를 사용합니다. 필요하면 직접 엔드포인트를 입력하세요.</p>
+
+    <label>질문<textarea id="query">임진왜란 때 사용한 무기 알려줘</textarea></label>
+
+    <label style="margin-top:12px;display:block">직접 호출 URL (선택, 비워두면 앱 프록시 사용)
+      <input id="directUrl" type="text" placeholder="http://15.165.213.11:8080/api/chat" />
+    </label>
+
+    <div style="margin-top:12px;display:flex;gap:12px;align-items:center">
+      <button id="send">질문 보내기</button>
+      <label><input id="useProxy" type="checkbox" checked /> 프록시 사용</label>
+      <span style="color:#a8c0d8">(프록시 사용이 기본값이며 CORS/HTTPS 문제를 피합니다)</span>
+    </div>
+
+    <h3 style="margin-top:18px">응답</h3>
+    <pre id="out">대기중...</pre>
+  </div>
+
+  <script>
+    const out = document.getElementById('out');
+    const send = document.getElementById('send');
+    const queryEl = document.getElementById('query');
+    const directUrlEl = document.getElementById('directUrl');
+    const useProxyEl = document.getElementById('useProxy');
+
+    async function askQuestion() {
+      out.textContent = '요청 중...';
+      const useProxy = useProxyEl.checked;
+      const directUrl = (directUrlEl.value || '').trim();
+      const payload = { query: queryEl.value };
+
+      let url;
+      let options = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      };
+
+      if (useProxy) {
+        // This forwards to the backend path /api/chat via Netlify function proxy
+        url = '/.netlify/functions/backend-proxy?path=/api/chat';
+      } else {
+        if (!directUrl) {
+          out.textContent = '직접 호출을 사용하려면 URL을 입력하세요.';
+          return;
+        }
+        url = directUrl;
+      }
+
+      try {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), 15000);
+        options.signal = controller.signal;
+
+        const resp = await fetch(url, options);
+        clearTimeout(id);
+        // Read raw text first to avoid "body stream already read" errors
+        let raw;
+        try {
+          raw = await resp.text();
+        } catch (e) {
+          raw = '' + e;
+        }
+        let text;
+        try {
+          const json = JSON.parse(raw);
+          text = JSON.stringify(json, null, 2);
+        } catch (e) {
+          text = raw;
+        }
+
+        out.textContent = `HTTP ${resp.status} ${resp.statusText}\n\n${text}`;
+      } catch (err) {
+        out.textContent = '에러: ' + (err && err.message ? err.message : String(err));
+      }
+    }
+
+    send.addEventListener('click', askQuestion);
+  </script>
+</body>
+</html>

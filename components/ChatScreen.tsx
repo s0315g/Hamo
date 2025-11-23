@@ -143,6 +143,39 @@ const ChatScreen = ({ theme, onBack }) => {
     synth.speak(utterance);
   };
 
+  // Send via app proxy directly to backend API (useful for testing)
+  const handleProxySend = async (messageToSendOverride?: string) => {
+    const messageToSend = messageToSendOverride || input;
+    if (messageToSend.trim() === '' || isLoading || isInitializing) return;
+
+    const userMessage = { sender: 'user', text: messageToSend };
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      const url = '/.netlify/functions/backend-proxy?path=/api/chat';
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: messageToSend }),
+      });
+      if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
+      let data;
+      try { data = await resp.json(); } catch (e) { const txt = await resp.text(); data = { text: txt }; }
+      const aiResponseText = data.text || data.answer || JSON.stringify(data);
+      const aiMessage = { sender: 'ai', text: aiResponseText };
+      setMessages(prev => [...prev, aiMessage]);
+      speak(aiResponseText);
+    } catch (error) {
+      console.error('Proxy send error:', error);
+      const errorMessage = { sender: 'ai', text: "죄송합니다. 응답 중 오류가 발생했습니다." };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
 
   const handleSend = async (messageToSendOverride?: string) => {
     const messageToSend = messageToSendOverride || input;
@@ -162,6 +195,39 @@ const ChatScreen = ({ theme, onBack }) => {
     } catch (error) {
       console.error("Error sending message to Gemini:", error);
       const errorMessage = { sender: 'ai', text: "죄송합니다. 오류가 발생했습니다. 다시 시도해주세요." };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Send directly to our genai serverless function (OpenAI proxy)
+  const handleGenaiSend = async (messageToSendOverride?: string) => {
+    const messageToSend = messageToSendOverride || input;
+    if (messageToSend.trim() === '' || isLoading || isInitializing) return;
+
+    const userMessage = { sender: 'user', text: messageToSend };
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      const url = '/.netlify/functions/genai';
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: messageToSend, systemInstruction: theme?.contextPrompt || '' }),
+      });
+      if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
+      let data;
+      try { data = await resp.json(); } catch (e) { const txt = await resp.text(); data = { text: txt }; }
+      const aiResponseText = data.text || JSON.stringify(data);
+      const aiMessage = { sender: 'ai', text: aiResponseText };
+      setMessages(prev => [...prev, aiMessage]);
+      speak(aiResponseText);
+    } catch (error) {
+      console.error('GenAI send error:', error);
+      const errorMessage = { sender: 'ai', text: "죄송합니다. 응답 중 오류가 발생했습니다." };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
@@ -225,11 +291,11 @@ const ChatScreen = ({ theme, onBack }) => {
 
       <footer className="p-4 bg-black/30 backdrop-blur-md border-t border-white/10">
         <div className="flex items-center space-x-3">
-          <input
+            <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            onKeyPress={(e) => e.key === 'Enter' && handleGenaiSend()}
             placeholder={isRecording ? "듣고 있어요..." : (isInitializing ? "채팅을 준비 중입니다..." : "질문을 입력하거나 마이크를 누르세요...")}
             className="flex-1 p-3 px-5 border border-white/20 rounded-full focus:outline-none focus:ring-2 focus:ring-[var(--primary)] transition bg-transparent text-white placeholder:text-[var(--text-secondary)]"
             disabled={isLoading || isInitializing}
@@ -245,7 +311,7 @@ const ChatScreen = ({ theme, onBack }) => {
             </button>
           ) : (
             <button 
-              onClick={() => handleSend()} 
+              onClick={() => handleGenaiSend()} 
               disabled={isLoading || isInitializing} 
               className="w-12 h-12 flex-shrink-0 bg-[var(--primary)] text-black rounded-full flex items-center justify-center hover:bg-[var(--primary-light)] disabled:bg-stone-500 transition-colors transform hover:scale-110"
               aria-label="보내기"
@@ -253,6 +319,15 @@ const ChatScreen = ({ theme, onBack }) => {
               <i className="fas fa-paper-plane"></i>
             </button>
           )}
+          {/* GenAI (OpenAI) button - now the primary action label '기본 질문' */}
+          <button
+            onClick={() => handleGenaiSend()}
+            disabled={isLoading || isInitializing || input.trim() === ''}
+            className="ml-2 px-3 py-2 rounded-full bg-white/10 text-[var(--text-secondary)] hover:bg-white/20 transition"
+            aria-label="기본 질문"
+          >
+            기본 질문
+          </button>
         </div>
       </footer>
     </div>
