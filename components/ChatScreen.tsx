@@ -290,7 +290,7 @@ const ChatScreen = ({ theme, onBack }) => {
       </main>
 
       <footer className="p-4 bg-black/30 backdrop-blur-md border-t border-white/10">
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-3 flex-wrap">
             <input
             type="text"
             value={input}
@@ -323,7 +323,7 @@ const ChatScreen = ({ theme, onBack }) => {
           <button
             onClick={() => handleGenaiSend()}
             disabled={isLoading || isInitializing || input.trim() === ''}
-            className="ml-2 px-3 py-2 rounded-full bg-white/10 text-[var(--text-secondary)] hover:bg-white/20 transition"
+            className="sm:ml-2 w-full sm:w-auto px-3 py-2 rounded-full bg-white/10 text-[var(--text-secondary)] hover:bg-white/20 transition mt-2 sm:mt-0"
             aria-label="기본 질문"
           >
             기본 질문

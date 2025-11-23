@@ -85,7 +85,7 @@ const App = () => {
         }
         return null;
       case Screen.COMPLETION:
-        return <CompletionScreen score={lastScore} totalQuestions={lastTotalQuestions} onNavigate={navigateTo} onRetry={handleRetryMission} />;
+        return <CompletionScreen theme={selectedTheme} score={lastScore} totalQuestions={lastTotalQuestions} onNavigate={navigateTo} onRetry={handleRetryMission} />;
       case Screen.ADMIN:
         return <AdminScreen onNavigate={navigateTo} />;
       default:

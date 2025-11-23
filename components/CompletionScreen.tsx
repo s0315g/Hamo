@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Screen } from '../types';
 
-const CompletionScreen = ({ score, totalQuestions, onNavigate, onRetry }) => {
+const CompletionScreen = ({ theme, score, totalQuestions, onNavigate, onRetry }) => {
   const percentage = totalQuestions > 0 ? Math.round((score / totalQuestions) * 100) : 0;
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -27,11 +27,13 @@ const CompletionScreen = ({ score, totalQuestions, onNavigate, onRetry }) => {
       return;
     }
     try {
+      // Determine theme_id from provided theme prop (support multiple shapes)
+      const theme_id = theme?.id || theme?.theme_id || theme?.raw?.theme_id || null;
       // POST to backend proxy which forwards to remote API (/api/recipient)
       const resp = await fetch('/.netlify/functions/backend-proxy?path=/api/recipient', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, score, totalQuestions }),
+        body: JSON.stringify({ email, score, totalQuestions, theme_id }),
       });
       if (!resp.ok) {
         const text = await resp.text();
@@ -46,7 +48,7 @@ const CompletionScreen = ({ score, totalQuestions, onNavigate, onRetry }) => {
         const STORAGE_KEY = 'prizeSubmissions';
         const raw = localStorage.getItem(STORAGE_KEY);
         const arr = raw ? JSON.parse(raw) : [];
-        const rec = { timestamp: new Date().toISOString(), email, score, totalQuestions, response: data };
+        const rec = { timestamp: new Date().toISOString(), email, score, totalQuestions, theme_id, response: data };
         arr.push(rec);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
       } catch (e) { console.warn('Failed to save submission locally', e); }
