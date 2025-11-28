@@ -3,25 +3,6 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { getItems, getQuizzes } from '../services/dbService';
 import { Screen } from '../types';
 
-const extractVideoUrl = (candidate: any): string | null => {
-  if (!candidate) return null;
-  if (typeof candidate === 'string') {
-    const trimmed = candidate.trim();
-    return trimmed.length ? trimmed : null;
-  }
-  if (typeof candidate === 'object') {
-    const direct = candidate.video || candidate.videoUrl || candidate.video_url || candidate.url || candidate.src || candidate.file || candidate.path;
-    if (typeof direct === 'string' && direct.trim()) return direct.trim();
-    if (candidate.media) {
-      const mediaVal = typeof candidate.media === 'string'
-        ? candidate.media
-        : candidate.media.video || candidate.media.url || candidate.media.src;
-      if (typeof mediaVal === 'string' && mediaVal.trim()) return mediaVal.trim();
-    }
-  }
-  return null;
-};
-
 // Minimap Popup Component
 const MinimapPopup = ({ spots, activeSpot, onSelectSpot, onClose }) => {
   const handleBackdropClick = (e) => {
@@ -156,86 +137,35 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
     return theme.longDescription.split('\n').map((_,i)=> `${theme.title} ${i+1}`);
   }, [items, theme]);
   
-  const sectionVideoPlaylist = useMemo(() => {
-    const collected = new Set<string>();
-    const pushCandidate = (value: any) => {
-      const url = extractVideoUrl(value);
-      if (url) collected.add(url);
-    };
-    const fromArray = (maybeArr: any) => {
-      if (Array.isArray(maybeArr)) maybeArr.forEach(pushCandidate);
-    };
-
-    fromArray((theme as any)?.sectionVideos);
-    fromArray((theme as any)?.videos);
-    fromArray((theme as any)?.videoList);
-    fromArray(theme?.raw?.sectionVideos);
-    fromArray(theme?.raw?.section_videos);
-    fromArray(theme?.raw?.videos);
-    fromArray(theme?.raw?.videoList);
-
-    const themedSections = (theme as any)?.sections || theme?.raw?.sections || theme?.raw?.sliderSections || theme?.raw?.slides;
-    if (Array.isArray(themedSections)) {
-      themedSections.forEach((section: any) => {
-        pushCandidate(section);
-        pushCandidate(section?.video || section?.videoUrl || section?.video_url);
-        pushCandidate(section?.media || section?.media_url);
-        fromArray(section?.videos || section?.videoList);
-      });
-    }
-
-    if (Array.isArray(items)) {
-      items.forEach((item) => {
-        fromArray(item?.sectionVideos || item?.section_videos || item?.videoList || item?.videos);
-      });
-    }
-
-    return Array.from(collected);
-  }, [items, theme]);
-  
   const videoSources = {
     imjin_war: '/videos/hamowar_start_video.mp4',
     jinju_museum: '/videos/hamowar_start_video.mp4',
     gonryongpo: '/videos/hamowar_start_video.mp4'
   };
   const themeVideo = videoSources[theme.id] || videoSources['jinju_museum'];
-
-  let itemVideo: string | null = null;
-  try {
-    const it = items && items.length > 0 ? items[activeSpot] : null;
-    if (it) {
-      // First check client-side overrides (localStorage)
-      const id = it.item_id || it.itemId || it.id || `itm_${activeSpot}`;
-      if (id && itemVideoOverrides && itemVideoOverrides[id]) {
-        itemVideo = itemVideoOverrides[id];
-      }
-      // If no override, use backend-provided fields
-      if (!itemVideo) {
-        itemVideo = it.video || it.video_src || it.videoUrl || it.src || it.file || null;
-        if (!itemVideo && it.media) itemVideo = it.media.video || it.media.url || null;
-        if (!itemVideo && it.raw) itemVideo = it.raw.video || it.raw.video_src || it.raw.media?.video || it.raw.media_url || null;
-      }
-      // Normalize empty-string to null
-      if (itemVideo === '') itemVideo = null;
-    }
-  } catch (e) {
-    itemVideo = null;
-  }
-
-  // Default special-case: for the Imjin War theme, prefer specific intro videos
-  // for the first and second spots unless a client override is present.
   const introVideo = '/videos/hamoIntroduce.mp4';
-  const courseVideo = themeVideo;
-  let videoSrc = itemVideo;
-
-  if (!videoSrc && sectionVideoPlaylist.length > 0) {
-    const loopIndex = activeSpot % sectionVideoPlaylist.length;
-    videoSrc = sectionVideoPlaylist[loopIndex];
+  const courseVideo = '/videos/hamowar_start_video.mp4';
+  const activeItem = items && items.length > activeSpot ? items[activeSpot] : null;
+  let videoSrc: string | null = null;
+  if (activeItem) {
+    const id = activeItem.item_id || activeItem.itemId || activeItem.id || activeItem.item_idx || `itm_${activeSpot}`;
+    if (id && itemVideoOverrides && itemVideoOverrides[id]) {
+      videoSrc = itemVideoOverrides[id];
+    }
+    if (!videoSrc) {
+      videoSrc = activeItem.video_url || activeItem.video || activeItem.video_src || activeItem.videoUrl || activeItem.src || activeItem.file || null;
+      if (!videoSrc && activeItem.media) videoSrc = activeItem.media.video || activeItem.media.url || null;
+      if (!videoSrc && activeItem.raw) videoSrc = activeItem.raw.video_url || activeItem.raw.video || activeItem.raw.video_src || activeItem.raw.media?.video || activeItem.raw.media_url || null;
+      if (videoSrc === '') videoSrc = null;
+    }
   }
-
+  if (!videoSrc) {
+    videoSrc = themeVideo;
+  }
   if (!videoSrc) {
     videoSrc = activeSpot === 0 ? introVideo : courseVideo;
   }
+  const resolvedVideoSrc = videoSrc;
 
   useEffect(() => {
     setProgresses(new Array(descriptionSpots.length).fill(0));
@@ -603,14 +533,14 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
       
       <main className="flex-1 relative overflow-hidden bg-black flex items-center justify-center">
         <video
-          key={videoSrc}
+          key={resolvedVideoSrc}
           autoPlay
           loop
           muted
           playsInline
           className="absolute top-0 left-0 w-full h-full object-cover z-0"
         >
-          <source src={videoSrc} type="video/mp4" />
+          <source src={resolvedVideoSrc} type="video/mp4" />
         </video>
         <div className="absolute inset-0 bg-black/40 z-10"></div>
 

@@ -439,15 +439,6 @@ const ChatScreen = ({ theme, onBack }) => {
               </button>
             )}
           </div>
-          {/* GenAI (OpenAI) button - now the primary action label '기본 질문' */}
-          <button
-            onClick={() => handleGenaiSend(undefined, { forceOpenAI: true })}
-            disabled={isLoading || isInitializing || input.trim() === ''}
-            className="w-full sm:w-auto px-4 py-2 rounded-full bg-white/10 text-[var(--text-secondary)] hover:bg-white/20 transition"
-            aria-label="기본 질문"
-          >
-            기본 질문
-          </button>
         </div>
       </footer>
     </div>
