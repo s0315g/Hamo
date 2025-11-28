@@ -3,6 +3,25 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { getItems, getQuizzes } from '../services/dbService';
 import { Screen } from '../types';
 
+const extractVideoUrl = (candidate: any): string | null => {
+  if (!candidate) return null;
+  if (typeof candidate === 'string') {
+    const trimmed = candidate.trim();
+    return trimmed.length ? trimmed : null;
+  }
+  if (typeof candidate === 'object') {
+    const direct = candidate.video || candidate.videoUrl || candidate.video_url || candidate.url || candidate.src || candidate.file || candidate.path;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    if (candidate.media) {
+      const mediaVal = typeof candidate.media === 'string'
+        ? candidate.media
+        : candidate.media.video || candidate.media.url || candidate.media.src;
+      if (typeof mediaVal === 'string' && mediaVal.trim()) return mediaVal.trim();
+    }
+  }
+  return null;
+};
+
 // Minimap Popup Component
 const MinimapPopup = ({ spots, activeSpot, onSelectSpot, onClose }) => {
   const handleBackdropClick = (e) => {
@@ -92,6 +111,7 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
       return {};
     }
   });
+  const [showInitialLoading, setShowInitialLoading] = useState(true);
 
   const saveItemVideoOverride = (itemId: string, url: string | null) => {
     try {
@@ -136,6 +156,43 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
     return theme.longDescription.split('\n').map((_,i)=> `${theme.title} ${i+1}`);
   }, [items, theme]);
   
+  const sectionVideoPlaylist = useMemo(() => {
+    const collected = new Set<string>();
+    const pushCandidate = (value: any) => {
+      const url = extractVideoUrl(value);
+      if (url) collected.add(url);
+    };
+    const fromArray = (maybeArr: any) => {
+      if (Array.isArray(maybeArr)) maybeArr.forEach(pushCandidate);
+    };
+
+    fromArray((theme as any)?.sectionVideos);
+    fromArray((theme as any)?.videos);
+    fromArray((theme as any)?.videoList);
+    fromArray(theme?.raw?.sectionVideos);
+    fromArray(theme?.raw?.section_videos);
+    fromArray(theme?.raw?.videos);
+    fromArray(theme?.raw?.videoList);
+
+    const themedSections = (theme as any)?.sections || theme?.raw?.sections || theme?.raw?.sliderSections || theme?.raw?.slides;
+    if (Array.isArray(themedSections)) {
+      themedSections.forEach((section: any) => {
+        pushCandidate(section);
+        pushCandidate(section?.video || section?.videoUrl || section?.video_url);
+        pushCandidate(section?.media || section?.media_url);
+        fromArray(section?.videos || section?.videoList);
+      });
+    }
+
+    if (Array.isArray(items)) {
+      items.forEach((item) => {
+        fromArray(item?.sectionVideos || item?.section_videos || item?.videoList || item?.videos);
+      });
+    }
+
+    return Array.from(collected);
+  }, [items, theme]);
+  
   const videoSources = {
     imjin_war: '/videos/hamowar_start_video.mp4',
     jinju_museum: '/videos/hamowar_start_video.mp4',
@@ -168,11 +225,16 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
   // Default special-case: for the Imjin War theme, prefer specific intro videos
   // for the first and second spots unless a client override is present.
   const introVideo = '/videos/hamoIntroduce.mp4';
-  const courseVideo = '/videos/hamowar_start_video.mp4';
-  let videoSrc = itemVideo || themeVideo;
-  if (!itemVideo) {
-    if (activeSpot === 0) videoSrc = introVideo;
-    else videoSrc = courseVideo;
+  const courseVideo = themeVideo;
+  let videoSrc = itemVideo;
+
+  if (!videoSrc && sectionVideoPlaylist.length > 0) {
+    const loopIndex = activeSpot % sectionVideoPlaylist.length;
+    videoSrc = sectionVideoPlaylist[loopIndex];
+  }
+
+  if (!videoSrc) {
+    videoSrc = activeSpot === 0 ? introVideo : courseVideo;
   }
 
   useEffect(() => {
@@ -190,6 +252,12 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
       synth.cancel();
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
+  }, []);
+
+  // Show a quick one-time loading modal on first mount
+  useEffect(() => {
+    const timer = setTimeout(() => setShowInitialLoading(false), 1400);
+    return () => clearTimeout(timer);
   }, []);
 
   // Load items and quizzes for preview
@@ -484,6 +552,14 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
 
   return (
     <div className="flex flex-col h-screen bg-black">
+      {showInitialLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <div className="glass-card p-6 rounded-3xl flex flex-col items-center text-center text-white">
+            <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin"></div>
+            <p className="mt-4 text-lg font-semibold">관람 공간을 준비하고 있어요...</p>
+          </div>
+        </div>
+      )}
        {isMinimapOpen && (
         <MinimapPopup
           spots={descriptionSpots}
@@ -506,20 +582,20 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
             </div>
             <div className="absolute right-0 flex items-center space-x-3">
               <button
-                onClick={() => setIsCourseOpen(c => !c)}
-                className="text-2xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-transform transform hover:scale-110"
-                aria-label={isCourseOpen ? '코스 닫기' : '코스 열기'}
-                title={isCourseOpen ? '코스 닫기' : '코스 열기'}
-              >
-                <i className="fas fa-list"></i>
-              </button>
-              <button
                 onClick={() => setIsMinimapOpen(true)}
                 className="text-3xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-transform transform hover:scale-110"
                 aria-label="미니맵 열기"
                 title="미니맵"
               >
                 <i className="fa-regular fa-map"></i>
+              </button>
+              <button
+                onClick={() => setIsCourseOpen(c => !c)}
+                className="text-2xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-transform transform hover:scale-110"
+                aria-label={isCourseOpen ? '코스 닫기' : '코스 열기'}
+                title={isCourseOpen ? '코스 닫기' : '코스 열기'}
+              >
+                <i className="fas fa-list"></i>
               </button>
             </div>
         </div>
@@ -580,24 +656,6 @@ const DocentScreen = ({ theme, age, onNavigate, onBack }) => {
                                 const chosenFull = (age === 'child') ? (childScript || generalScript || it.item_desc || '') : (generalScript || childScript || it.item_desc || '');
                                 setFullScriptItem({ title, text: chosenFull.toString() });
                               }} className="text-xs py-1 px-2 bg-white/10 text-[var(--text-secondary)] rounded-full">전체보기</button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const id = it.item_id || it.itemId || it.id || `itm_${i}`;
-                                const current = (itemVideoOverrides && itemVideoOverrides[id]) || '';
-                                const url = prompt('이 코스의 비디오 URL을 입력하세요 (빈값이면 삭제):', current || '');
-                                if (url === null) return; // cancelled
-                                const trimmed = (url || '').trim();
-                                if (trimmed) {
-                                  saveItemVideoOverride(id, trimmed);
-                                } else {
-                                  saveItemVideoOverride(id, null);
-                                }
-                              }}
-                              className="text-xs py-1 px-2 bg-white/10 text-[var(--text-secondary)] rounded-full"
-                            >
-                              영상 지정
-                            </button>
                       </div>
                     </div>
                   );

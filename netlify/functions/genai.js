@@ -2,42 +2,34 @@
 // Set the environment variable OPENAI_API_KEY in Netlify site settings.
 // The client POSTs { message, systemInstruction } and this function returns { text }.
 
-exports.handler = async function (event) {
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Method Not Allowed' }),
-    };
+const DEFAULT_MODEL = 'gpt-3.5-turbo';
+
+const jsonResponse = (status, data) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+export default async function handler(request) {
+  if (request.method !== 'POST') {
+    return jsonResponse(405, { error: 'Method Not Allowed' });
   }
 
   let body;
   try {
-    body = JSON.parse(event.body || '{}');
+    body = await request.json();
   } catch (err) {
-    return {
-      statusCode: 400,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Invalid JSON body' }),
-    };
+    return jsonResponse(400, { error: 'Invalid JSON body' });
   }
 
   const { message, systemInstruction } = body;
   if (!message || typeof message !== 'string') {
-    return {
-      statusCode: 400,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Missing "message" string in body' }),
-    };
+    return jsonResponse(400, { error: 'Missing "message" string in body' });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Server misconfiguration: OPENAI_API_KEY is not set' }),
-    };
+    return jsonResponse(500, { error: 'Server misconfiguration: OPENAI_API_KEY is not set' });
   }
 
   try {
@@ -45,6 +37,7 @@ exports.handler = async function (event) {
     // server-side QA return their own answer structure (e.g., { answer: '...' }).
     // Enable by setting environment variable BACKEND_BASE and BACKEND_USE_CHAT_FIRST=true,
     // or by client sending `useBackendChat: true` in the request body.
+    const wantsStream = Boolean(body && body.stream);
     const forceOpenAI = Boolean(body && body.forceOpenAI);
     const tryBackendChat = !forceOpenAI && ((process.env.BACKEND_BASE && (process.env.BACKEND_USE_CHAT_FIRST === 'true')) || Boolean(body && body.useBackendChat));
     if (tryBackendChat) {
@@ -64,11 +57,7 @@ exports.handler = async function (event) {
           if (contentType.includes('application/json')) {
             const chatData = await chatResp.json().catch(() => null);
             if (chatData !== null) {
-              return {
-                statusCode: 200,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(chatData),
-              };
+              return jsonResponse(200, chatData);
             }
           }
           // Fallback for SSE or plain text responses: read body and normalize/merge pieces
@@ -150,11 +139,7 @@ exports.handler = async function (event) {
               cleaned = await fixHangulSpacingWithOpenAI(cleaned, apiKey);
             }
           }
-          return {
-            statusCode: 200,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: cleaned, source: 'backend-merged' }),
-          };
+          return jsonResponse(200, { text: cleaned, source: 'backend-merged' });
         } else {
           console.debug('[genai] backend chat returned non-ok', chatResp.status);
         }
@@ -174,6 +159,10 @@ exports.handler = async function (event) {
     messages.push({ role: 'user', content: message });
 
     // Call OpenAI Chat Completions endpoint using fetch (Node 18+ on Netlify supports fetch)
+    if (wantsStream) {
+      return await streamOpenAIResponse({ messages, apiKey, temperature: 0.7, maxTokens: 800 });
+    }
+
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -181,7 +170,7 @@ exports.handler = async function (event) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: DEFAULT_MODEL,
         messages,
         temperature: 0.7,
         max_tokens: 800,
@@ -191,11 +180,7 @@ exports.handler = async function (event) {
     if (!resp.ok) {
       const text = await resp.text();
       console.error('OpenAI error', resp.status, text);
-      return {
-        statusCode: 502,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'OpenAI API error', status: resp.status, details: text }),
-      };
+      return jsonResponse(502, { error: 'OpenAI API error', status: resp.status, details: text });
     }
 
     const data = await resp.json();
@@ -207,27 +192,15 @@ exports.handler = async function (event) {
     try {
       const lines = String(content).split(/\r?\n/).filter(l => l.trim() !== '');
       const truncated = lines.length > 0 ? lines.slice(0, maxLines).join('\n') : String(content).split(/\r?\n/).slice(0, maxLines).join('\n');
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: truncated }),
-      };
+      return jsonResponse(200, { text: truncated });
     } catch (e) {
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: content }),
-      };
+      return jsonResponse(200, { text: content });
     }
   } catch (err) {
     console.error('OpenAI proxy error:', err);
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Internal Server Error', details: String(err) }),
-    };
+    return jsonResponse(500, { error: 'Internal Server Error', details: String(err) });
   }
-};
+}
 
 async function fixHangulSpacingWithOpenAI(text, apiKey) {
   if (!apiKey) return text;
@@ -243,7 +216,7 @@ async function fixHangulSpacingWithOpenAI(text, apiKey) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: DEFAULT_MODEL,
         messages: [
           { role: 'system', content: '당신은 한국어 문장을 자연스럽게 띄어쓰기 하는 교정 도우미입니다.' },
           { role: 'user', content: prompt },
@@ -264,4 +237,97 @@ async function fixHangulSpacingWithOpenAI(text, apiKey) {
     console.warn('[genai] spacing OpenAI call threw', err);
     return text;
   }
+}
+
+async function streamOpenAIResponse({ messages, apiKey, temperature, maxTokens }) {
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: DEFAULT_MODEL,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+      stream: true,
+    }),
+  });
+
+  if (!resp.ok || !resp.body) {
+    const text = await resp.text().catch(() => '');
+    return new Response(JSON.stringify({ error: 'OpenAI API error', status: resp.status, details: text }), {
+      status: resp.status || 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (payload) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      };
+
+      send({ event: 'start' });
+
+      const reader = resp.body.getReader();
+      let buffer = '';
+      let fullText = '';
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const eventChunk of events) {
+            const lines = eventChunk.split('\n');
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              if (!line.startsWith('data:')) continue;
+              const dataStr = line.replace(/^data:\s*/, '');
+              if (dataStr === '[DONE]') {
+                send({ event: 'complete', text: fullText });
+                controller.close();
+                return;
+              }
+              let parsed;
+              try {
+                parsed = JSON.parse(dataStr);
+              } catch (parseErr) {
+                console.warn('[genai] failed to parse stream chunk', parseErr);
+                continue;
+              }
+              const delta = parsed?.choices?.[0]?.delta?.content;
+              if (delta) {
+                fullText += delta;
+                send({ event: 'delta', text: delta, fullText });
+              }
+            }
+          }
+        }
+        send({ event: 'complete', text: fullText });
+        controller.close();
+      } catch (err) {
+        console.error('[genai] error streaming OpenAI response', err);
+        send({ event: 'error', message: String(err) });
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
 }

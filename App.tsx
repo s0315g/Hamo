@@ -8,6 +8,7 @@ import MissionScreen from './components/MissionScreen';
 import CompletionScreen from './components/CompletionScreen';
 import AdminScreen from './components/AdminScreen';
 import { getThemes } from './services/dbService';
+import { AI_AVATAR_SRC } from './constants';
 
 const App = () => {
   const [currentScreen, setCurrentScreen] = useState(Screen.HOME);
@@ -15,6 +16,16 @@ const App = () => {
   const [selectedAge, setSelectedAge] = useState('adult');
   const [lastScore, setLastScore] = useState(0);
   const [lastTotalQuestions, setLastTotalQuestions] = useState(0);
+
+  // Preload heavy assets (like the chat avatar) so navigating to chat feels instant.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const avatarImage = new Image();
+    avatarImage.src = AI_AVATAR_SRC;
+    return () => {
+      avatarImage.src = '';
+    };
+  }, []);
 
   // Dev helper: auto-select a theme if VITE_FORCE_THEME_ID is set
   useEffect(() => {

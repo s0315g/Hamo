@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { startChat } from '../services/geminiService';
 import { Chat } from '@google/genai';
+import { AI_AVATAR_SRC } from '../constants';
 
 // FIX: Add type definitions for the SpeechRecognition API to resolve TypeScript errors.
 // This is necessary because the Web Speech API is not yet a W3C standard and may not be included in default TypeScript DOM typings.
@@ -33,23 +34,10 @@ const ChatScreen = ({ theme, onBack }) => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [chat, setChat] = useState<Chat | null>(null);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const messagesEndRef = useRef(null);
+  const streamingTimeoutsRef = useRef<number[]>([]);
 
-  // Effect to load speech synthesis voices
-  useEffect(() => {
-    const synth = window.speechSynthesis;
-    const loadVoices = () => {
-      setVoices(synth.getVoices());
-    };
-    synth.onvoiceschanged = loadVoices;
-    loadVoices();
-    return () => {
-      synth.onvoiceschanged = null;
-    };
-  }, []);
-  
   // Effect to set up Speech Recognition
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -106,42 +94,140 @@ const ChatScreen = ({ theme, onBack }) => {
   // Effect for cleanup on unmount
   useEffect(() => {
     return () => {
-      window.speechSynthesis.cancel();
       recognitionRef.current?.abort();
+      streamingTimeoutsRef.current.forEach((id) => clearTimeout(id));
+      streamingTimeoutsRef.current = [];
     };
   }, []);
+
+  const appendAiPlaceholder = () => {
+    let placeholderIndex = -1;
+    setMessages((prev) => {
+      placeholderIndex = prev.length;
+      return [...prev, { sender: 'ai', text: '' }];
+    });
+    return placeholderIndex;
+  };
+
+
+  const updateAiMessageAt = (index: number, text: string) => {
+    setMessages((prev) => prev.map((msg, idx) => (idx === index ? { ...msg, text } : msg)));
+  };
+
+  const streamAiMessage = (fullText: string) => {
+    const text = typeof fullText === 'string' ? fullText : String(fullText ?? '');
+    if (!text) return;
+    if (text.length <= 60) {
+      setMessages((prev) => [...prev, { sender: 'ai', text }]);
+      return;
+    }
+
+    let placeholderIndex = -1;
+    setMessages((prev) => {
+      placeholderIndex = prev.length;
+      return [...prev, { sender: 'ai', text: '' }];
+    });
+
+    const chars = Array.from(text);
+    let acc = '';
+    const emit = () => {
+      if (!chars.length) {
+        return;
+      }
+      acc += chars.shift();
+      setMessages((prev) => prev.map((msg, idx) => (idx === placeholderIndex ? { ...msg, text: acc } : msg)));
+      if (!chars.length) {
+        return;
+      }
+      const delay = /[\.?!]/.test(acc.slice(-1)) ? 45 : 18;
+      const tid = window.setTimeout(emit, delay);
+      streamingTimeoutsRef.current.push(tid);
+    };
+
+    emit();
+  };
+
+  const consumeGenaiStream = async (body: ReadableStream<Uint8Array> | null) => {
+    if (!body) throw new Error('스트림이 비어 있습니다.');
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let placeholderIndex: number | null = null;
+    let fullText = '';
+
+    const ensurePlaceholder = () => {
+      if (placeholderIndex === null) {
+        placeholderIndex = appendAiPlaceholder();
+      }
+      return placeholderIndex;
+    };
+
+    const processChunk = (chunk: string) => {
+      const lines = chunk.split('\n');
+      for (const rawLine of lines) {
+        if (!rawLine.trim()) continue;
+        if (!rawLine.startsWith('data:')) continue;
+        const payloadStr = rawLine.replace(/^data:\s*/, '');
+        if (payloadStr === '') continue;
+        let payload: any;
+        try {
+          payload = JSON.parse(payloadStr);
+        } catch (err) {
+          console.warn('ChatScreen: failed to parse SSE payload', err, payloadStr);
+          continue;
+        }
+        const eventType = payload.event || 'delta';
+        if (eventType === 'start') continue;
+        if (eventType === 'delta') {
+          const nextText = typeof payload.fullText === 'string' && payload.fullText.length > 0
+            ? payload.fullText
+            : `${fullText}${payload.text || ''}`;
+          if (!nextText) continue;
+          fullText = nextText;
+          const idx = ensurePlaceholder();
+          updateAiMessageAt(idx, nextText);
+        } else if (eventType === 'complete') {
+          const finalText = typeof payload.text === 'string' && payload.text.length > 0 ? payload.text : fullText;
+          if (finalText) {
+            const idx = ensurePlaceholder();
+            updateAiMessageAt(idx, finalText);
+            fullText = finalText;
+          }
+          return true;
+        } else if (eventType === 'error') {
+          throw new Error(payload.message || '스트리밍 중 오류가 발생했습니다.');
+        }
+      }
+      return false;
+    };
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const segments = buffer.split('\n\n');
+        buffer = segments.pop() ?? '';
+        for (const segment of segments) {
+          const completed = processChunk(segment);
+          if (completed) return fullText;
+        }
+      }
+      if (buffer.trim()) {
+        processChunk(buffer);
+      }
+      return fullText;
+    } finally {
+      reader.releaseLock();
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(scrollToBottom, [messages]);
-
-  const speak = (text) => {
-    if (!text || voices.length === 0) return;
-
-    const synth = window.speechSynthesis;
-    synth.cancel(); // Stop any previous speech
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'ko-KR';
-    utterance.pitch = 0.8; 
-    utterance.rate = 0.95;
-    
-    const koreanVoices = voices.filter(voice => voice.lang === 'ko-KR');
-    let selectedVoice = null;
-    if (koreanVoices.length > 0) {
-      const voicePriority = ['Google 한국의', 'Yuna', 'Narae', 'Heami', 'Female', '여성'];
-      for (const name of voicePriority) {
-        selectedVoice = koreanVoices.find(voice => voice.name.includes(name));
-        if (selectedVoice) break;
-      }
-      if (!selectedVoice) selectedVoice = koreanVoices[0];
-    }
-    if (selectedVoice) utterance.voice = selectedVoice;
-    
-    synth.speak(utterance);
-  };
 
   // Send via app proxy directly to backend API (useful for testing)
   const handleProxySend = async (messageToSendOverride?: string) => {
@@ -164,9 +250,7 @@ const ChatScreen = ({ theme, onBack }) => {
       let data;
       try { data = await resp.json(); } catch (e) { const txt = await resp.text(); data = { text: txt }; }
       const aiResponseText = data.text || data.answer || JSON.stringify(data);
-      const aiMessage = { sender: 'ai', text: aiResponseText };
-      setMessages(prev => [...prev, aiMessage]);
-      speak(aiResponseText);
+      streamAiMessage(aiResponseText);
     } catch (error) {
       console.error('Proxy send error:', error);
       const errorMessage = { sender: 'ai', text: "죄송합니다. 응답 중 오류가 발생했습니다." };
@@ -189,9 +273,7 @@ const ChatScreen = ({ theme, onBack }) => {
     try {
       const response = await chat.sendMessage({ message: messageToSend });
       const aiResponseText = response.text;
-      const aiMessage = { sender: 'ai', text: aiResponseText };
-      setMessages(prev => [...prev, aiMessage]);
-      speak(aiResponseText);
+      streamAiMessage(aiResponseText);
     } catch (error) {
       console.error("Error sending message to Gemini:", error);
       const errorMessage = { sender: 'ai', text: "죄송합니다. 오류가 발생했습니다. 다시 시도해주세요." };
@@ -200,6 +282,7 @@ const ChatScreen = ({ theme, onBack }) => {
       setIsLoading(false);
     }
   };
+  
 
   // Send directly to our genai serverless function (OpenAI proxy)
   const handleGenaiSend = async (messageToSendOverride?: string, options?: { forceOpenAI?: boolean }) => {
@@ -219,16 +302,25 @@ const ChatScreen = ({ theme, onBack }) => {
         body: JSON.stringify({
           message: messageToSend,
           systemInstruction: theme?.contextPrompt || '',
+          stream: true,
           forceOpenAI: Boolean(options?.forceOpenAI),
         }),
       });
       if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
-      let data;
-      try { data = await resp.json(); } catch (e) { const txt = await resp.text(); data = { text: txt }; }
-      const aiResponseText = data.text || JSON.stringify(data);
-      const aiMessage = { sender: 'ai', text: aiResponseText };
-      setMessages(prev => [...prev, aiMessage]);
-      speak(aiResponseText);
+      const contentType = resp.headers.get('content-type') || '';
+      if (contentType.includes('text/event-stream')) {
+        await consumeGenaiStream(resp.body);
+      } else {
+        let data;
+        try {
+          data = await resp.json();
+        } catch (e) {
+          const txt = await resp.text();
+          data = { text: txt };
+        }
+        const aiResponseText = data.text || JSON.stringify(data);
+        streamAiMessage(aiResponseText);
+      }
     } catch (error) {
       console.error('GenAI send error:', error);
       const errorMessage = { sender: 'ai', text: "죄송합니다. 응답 중 오류가 발생했습니다." };
@@ -248,6 +340,18 @@ const ChatScreen = ({ theme, onBack }) => {
 
   return (
     <div className="flex flex-col h-screen">
+      <style>{`
+        @keyframes hamoFloat {
+          0% { transform: rotateX(6deg) rotateY(-6deg) translateY(2px); }
+          50% { transform: rotateX(9deg) rotateY(-3deg) translateY(-4px); }
+          100% { transform: rotateX(6deg) rotateY(-6deg) translateY(2px); }
+        }
+        @keyframes hamoPulse {
+          0% { opacity: 0.55; transform: scale(0.95); }
+          50% { opacity: 0.9; transform: scale(1.05); }
+          100% { opacity: 0.55; transform: scale(0.95); }
+        }
+      `}</style>
        <div id="stars" className="fixed"></div>
       <div id="stars2" className="fixed"></div>
       <div id="stars3" className="fixed"></div>
@@ -268,9 +372,19 @@ const ChatScreen = ({ theme, onBack }) => {
           <>
             {messages.map((msg, index) => (
               <div key={index} className={`flex items-end gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                {msg.sender === 'ai' && 
-                  <img src="https://i.ibb.co/k3y12s1/hamo-avatar.png" alt="하모 아바타" className="w-10 h-10 rounded-full bg-slate-200 flex-shrink-0" />
-                }
+                {msg.sender === 'ai' && (
+                  <div className="relative w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0" style={{ perspective: '800px' }}>
+                    <div className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-300 via-indigo-300 to-pink-300 blur-2xl opacity-70 animate-[hamoPulse_3s_ease-in-out_infinite]" />
+                    <div className="absolute inset-2 rounded-full bg-black/60 blur-lg" />
+                    <div className="relative w-full h-full rounded-full border border-white/20 shadow-[0_12px_30px_rgba(15,23,42,0.45)] overflow-hidden" style={{ animation: 'hamoFloat 5s ease-in-out infinite' }}>
+                      <img src={AI_AVATAR_SRC} alt="하모 아바타" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-black/40 mix-blend-screen" />
+                      <div className="absolute top-2 left-2 w-4 h-4 rounded-full bg-white/70 blur-sm" />
+                      <div className="absolute top-4 left-4 w-2 h-2 rounded-full bg-white/80" />
+                      <div className="absolute bottom-3 right-4 w-3 h-3 rounded-full bg-white/50 blur" />
+                    </div>
+                  </div>
+                )}
                 <div className={`max-w-xs md:max-w-md lg:max-w-2xl px-5 py-3 rounded-3xl ${msg.sender === 'user' ? 'bg-[var(--primary)] text-black rounded-br-lg' : 'glass-card text-[var(--text-primary)] rounded-bl-lg shadow-sm'}`}>
                   <p className="leading-relaxed">{msg.text}</p>
                 </div>
@@ -278,7 +392,7 @@ const ChatScreen = ({ theme, onBack }) => {
             ))}
             {isLoading && (
               <div className="flex items-end gap-3 justify-start">
-                <img src="https://i.ibb.co/k3y12s1/hamo-avatar.png" alt="하모 아바타" className="w-10 h-10 rounded-full bg-slate-200 flex-shrink-0" />
+                <img src="/videos/hamo.png" alt="하모 아바타" className="w-10 h-10 rounded-full bg-slate-200 flex-shrink-0" />
                 <div className="max-w-xs md:max-w-md px-5 py-3 rounded-3xl glass-card text-[var(--text-primary)] rounded-bl-lg shadow-sm">
                   <div className="flex items-center space-x-1.5">
                     <span className="w-2.5 h-2.5 bg-stone-300 rounded-full animate-pulse delay-0"></span>
