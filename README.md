@@ -1,7 +1,3 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 ## 구성
 
 ### 프론트엔드 (Vite + React)
@@ -29,6 +25,3 @@
 2. **도슨트 투어 초기화** – `DocentScreen` 이 마운트되면 1초간 준비 모달을 보여주고, 동시에 `getItems`, `getQuizzes` 로 데이터를 불러와 코스·퀴즈·배경 영상을 세팅합니다. 각 코스 설명은 Web Speech API 로 낭독되고, 미니맵/코스 패널에서 자유롭게 이동할 수 있습니다.
 3. **AI 상호작용** – 투어 중 "하모에게 질문" 버튼을 누르면 `ChatScreen` 으로 이동합니다. 사용자는 텍스트 입력 또는 마이크 입력을 선택할 수 있으며, 요청은 `/.netlify/functions/genai` 에 전달됩니다. "기본 질문" 버튼은 RAG 없이 OpenAI 결과만 반환합니다.
 4. **미션 & 리워드** – 코스를 모두 들은 뒤 "미션"으로 이동하면 퀴즈를 풀고, 완료 시 `CompletionScreen` 으로 이동해 이메일·테마 정보를 포함한 리워드 신청을 전송합니다. 제출 내역은 로컬/백엔드 양쪽에 기록됩니다.
-5. **어드민 뷰** – `AdminScreen` 에서는 로컬에 저장된 제출 목록을 확인하거나 CSV로 내보낼 수 있습니다.
-
-이 구조 덕분에 프론트엔드는 테마 교체나 영상 교체, 새로운 LLM 경로 추가를 손쉽게 적용할 수 있습니다.
