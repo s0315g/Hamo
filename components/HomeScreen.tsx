@@ -75,7 +75,7 @@ const HomeScreen = ({ onSelectTheme }) => {
           </div>
             <header className="text-center space-y-2">
             <h1 className="text-5xl font-bold text-white">진주 하모 도슨트</h1>
-            <p className="text-lg text-[var(--text-secondary)]">아름다운 도시 진주에서 하모와 함께 역사를 만나보세요.</p>
+            <p className="home-description text-[var(--text-secondary)]">아름다운 도시 진주에서 하모와 함께 역사를 만나보세요.</p>
             </header>
 
             <main className="space-y-4 mt-6">
